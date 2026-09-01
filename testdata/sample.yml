@@ -1,0 +1,24 @@
+all:
+  vars:
+    ntp_server: ntp.example.com
+  children:
+    webservers:
+      hosts:
+        web1.example.com:
+          http_port: 80
+        web2.example.com:
+          http_port: 8080
+          ansible_user: web2admin
+      vars:
+        ansible_user: deploy
+    dbservers:
+      hosts:
+        db1.example.com: {}
+      vars:
+        ansible_user: dbadmin
+    datacenter1:
+      children:
+        webservers: {}
+        dbservers: {}
+      vars:
+        region: eu-west
