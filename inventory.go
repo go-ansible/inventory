@@ -113,6 +113,31 @@ func (inv *Inventory) finalize() {
 	}
 }
 
+// AddHost adds a host to the inventory at runtime — Ansible's add_host
+// module — with the given variables, as a member of every named group
+// (created if new). With no groups it is still reachable by the "all"
+// pattern (matchTerm's "all"/"*" case iterates every known host
+// directly) even though it joins no group's direct membership. Hosts
+// already matched by an in-progress play are unaffected; only plays
+// matched after this call see the addition, matching real Ansible.
+func (inv *Inventory) AddHost(name string, vals map[string]any, groups ...string) {
+	h := inv.host(name)
+	for k, v := range vals {
+		h.Vars[k] = v
+	}
+	for _, g := range groups {
+		inv.addHostToGroup(name, g)
+	}
+	inv.finalize()
+}
+
+// AddToGroup records an existing (or new) host as a member of group,
+// creating the group if it doesn't exist — Ansible's group_by module.
+func (inv *Inventory) AddToGroup(hostName, groupName string) {
+	inv.addHostToGroup(hostName, groupName)
+	inv.finalize()
+}
+
 // ancestors returns g and every group that (transitively) contains g,
 // ordered from the most distant ancestor to g itself — the order Ansible
 // applies group vars in (parent group vars are overridden by child group
