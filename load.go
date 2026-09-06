@@ -52,6 +52,13 @@ func Load(path string) (*Inventory, error) {
 			inv.Merge(sub)
 		}
 		baseDirs = append(baseDirs, path)
+	} else if IsScript(info.Mode()) {
+		// A dynamic inventory script's own output is the complete
+		// inventory — no group_vars/host_vars directory merge applies
+		// (real Ansible does not look for one next to a script either),
+		// so return directly rather than falling through to the
+		// baseDirs handling below.
+		return ParseScript(path)
 	} else {
 		sub, err := loadFile(path)
 		if err != nil {

@@ -280,3 +280,101 @@ func TestLoadUnreadableFile(t *testing.T) {
 		t.Fatal("Load on an unreadable file: got nil error, want one")
 	}
 }
+
+func writeScript(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLoadDynamicInventoryScriptWithMeta locks in real Ansible's
+// dynamic-inventory-script contract (executable file, --list prints
+// JSON, "_meta.hostvars" is the efficient form) with a fixture
+// verified byte-for-byte against a real `ansible-inventory --list`
+// run: web1/web2 (full-form group "web", with a group var) and db1
+// (shorthand array-form group "db") both inherit env=production
+// through "prod" listing them as children — real Ansible's own
+// hostvars for web1 there is exactly
+// {ansible_connection, env, ip, role}, matching this test's want.
+func TestLoadDynamicInventoryScriptWithMeta(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inv.sh")
+	writeScript(t, path, `#!/bin/sh
+cat <<'JSON'
+{
+  "web": {"hosts": ["web1", "web2"], "vars": {"role": "webserver"}},
+  "db": ["db1"],
+  "prod": {"children": ["web", "db"], "vars": {"env": "production"}},
+  "_meta": {"hostvars": {
+    "web1": {"ansible_connection": "local", "ip": "10.0.0.1"},
+    "web2": {"ansible_connection": "local", "ip": "10.0.0.2"},
+    "db1": {"ansible_connection": "local", "ip": "10.0.0.3"}
+  }}
+}
+JSON
+`)
+	inv, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := map[string]map[string]any{
+		"web1": {"ansible_connection": "local", "env": "production", "ip": "10.0.0.1", "role": "webserver"},
+		"web2": {"ansible_connection": "local", "env": "production", "ip": "10.0.0.2", "role": "webserver"},
+		"db1":  {"ansible_connection": "local", "env": "production", "ip": "10.0.0.3"},
+	}
+	for host, wantVars := range want {
+		got := inv.HostVars(host)
+		if len(got) != len(wantVars) {
+			t.Errorf("%s: HostVars = %v, want %v", host, got, wantVars)
+			continue
+		}
+		for k, v := range wantVars {
+			if got[k] != v {
+				t.Errorf("%s: HostVars[%q] = %v, want %v", host, k, got[k], v)
+			}
+		}
+	}
+}
+
+// TestLoadDynamicInventoryScriptHostFallback locks in the --host
+// fallback for a script that omits _meta entirely — real Ansible's own
+// documented behavior in that case, verified against a real
+// ansible-inventory run of an equivalent fixture.
+func TestLoadDynamicInventoryScriptHostFallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inv.sh")
+	writeScript(t, path, `#!/bin/sh
+if [ "$1" = "--host" ]; then
+  case "$2" in
+    web1) echo '{"ip": "10.0.0.1"}' ;;
+    web2) echo '{"ip": "10.0.0.2"}' ;;
+    *) echo '{}' ;;
+  esac
+else
+  echo '{"web": {"hosts": ["web1", "web2"]}}'
+fi
+`)
+	inv, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := inv.HostVars("web1")["ip"]; got != "10.0.0.1" {
+		t.Errorf("web1 ip = %v, want 10.0.0.1", got)
+	}
+	if got := inv.HostVars("web2")["ip"]; got != "10.0.0.2" {
+		t.Errorf("web2 ip = %v, want 10.0.0.2", got)
+	}
+}
+
+func TestLoadDynamicInventoryScriptFailureIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inv.sh")
+	writeScript(t, path, "#!/bin/sh\necho 'not json' >&2\nexit 1\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load on a failing inventory script: got nil error, want one")
+	}
+}
