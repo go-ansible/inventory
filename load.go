@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Load reads an inventory from path, which may be:
@@ -160,12 +158,16 @@ func mergeVarsDir(inv *Inventory, dir string, targetFor func(name string) map[st
 }
 
 func mergeVarsFile(path string, target map[string]any, vaultPassword string) error {
-	data, err := readMaybeEncrypted(path, vaultPassword)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("inventory: %w", err)
 	}
+	// vault.UnmarshalYAML handles both shapes a secret can take here: the
+	// whole file encrypted, or individual !vault-tagged scalars sitting
+	// in an otherwise-readable group_vars file, which is how one secret
+	// lives beside plaintext.
 	var vars map[string]any
-	if err := yaml.Unmarshal(data, &vars); err != nil {
+	if err := vault.UnmarshalYAML(data, vaultPassword, &vars); err != nil {
 		return fmt.Errorf("inventory: parsing %s: %w", path, err)
 	}
 	for k, v := range vars {
