@@ -3,6 +3,7 @@ package inventory
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-ansible/vault"
@@ -87,5 +88,48 @@ func TestLoadStillWorksWithoutVault(t *testing.T) {
 	}
 	if _, ok := inv.Hosts["h1"]; !ok {
 		t.Errorf("hosts = %v, want h1", inv.Hosts)
+	}
+}
+
+// TestLoadWithVaultInlineScalar covers the shape ansible-vault
+// encrypt_string produces: one !vault-tagged secret sitting in an
+// otherwise-readable group_vars file, beside ordinary plaintext.
+func TestLoadWithVaultInlineScalar(t *testing.T) {
+	dir := t.TempDir()
+	invPath := filepath.Join(dir, "hosts.yml")
+	if err := os.WriteFile(invPath, []byte("all:\n  hosts:\n    h1: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	enc, err := vault.Encrypt([]byte("s3cr3t"), "pw", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc strings.Builder
+	doc.WriteString("api_key: !vault |\n")
+	for _, line := range strings.Split(strings.TrimRight(enc, "\n"), "\n") {
+		doc.WriteString("          " + line + "\n")
+	}
+	doc.WriteString("region: eu-west\n")
+
+	gv := filepath.Join(dir, "group_vars")
+	if err := os.MkdirAll(gv, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gv, "all.yml"), []byte(doc.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	inv, err := LoadWithVault(invPath, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := inv.Groups["all"]
+	if got := g.Vars["api_key"]; got != "s3cr3t" {
+		t.Errorf("api_key = %#v, want the decrypted secret", got)
+	}
+	// The plaintext beside it is untouched.
+	if got := g.Vars["region"]; got != "eu-west" {
+		t.Errorf("region = %#v, want eu-west", got)
 	}
 }
