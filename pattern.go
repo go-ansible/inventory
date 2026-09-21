@@ -23,22 +23,18 @@ func (inv *Inventory) Match(pattern string) ([]*Host, error) {
 	}
 
 	result := map[string]*Host{}
-	for i, term := range terms {
+	for _, term := range orderPatterns(terms) {
 		op, expr := termOp(term)
 		matched, err := inv.matchTerm(expr)
 		if err != nil {
 			return nil, err
 		}
-		switch {
-		case i == 0:
-			for _, h := range matched {
-				result[h.Name] = h
-			}
-		case op == '!':
+		switch op {
+		case '!':
 			for _, h := range matched {
 				delete(result, h.Name)
 			}
-		case op == '&':
+		case '&':
 			keep := map[string]*Host{}
 			for _, h := range matched {
 				if _, ok := result[h.Name]; ok {
@@ -59,6 +55,44 @@ func (inv *Inventory) Match(pattern string) ([]*Host, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// orderPatterns is real Ansible's own order_patterns
+// (ansible/inventory/manager.py): the terms of a pattern are applied
+// by KIND, not in the order they were written — every plain term
+// first, then every `&` intersection, then every `!` exclusion. And a
+// pattern with no plain term at all gets an implicit "all" to subtract
+// from, which is what makes `!web3` mean "everything except web3"
+// rather than "web3".
+//
+// Applying the terms left to right instead is not a near-miss: it
+// INVERTS the common case. `hosts: "!db-primary"` selected exactly the
+// host it names, so a play written to avoid one machine ran on that
+// machine and nowhere else. Measured against real ansible-core 2.21.4,
+// which reorders first.
+func orderPatterns(terms []string) []string {
+	var regular, intersect, exclude []string
+	for _, t := range terms {
+		if t == "" {
+			continue
+		}
+		switch t[0] {
+		case '!':
+			exclude = append(exclude, t)
+		case '&':
+			intersect = append(intersect, t)
+		default:
+			regular = append(regular, t)
+		}
+	}
+	if len(regular) == 0 {
+		regular = []string{"all"}
+	}
+
+	out := make([]string, 0, len(regular)+len(intersect)+len(exclude))
+	out = append(out, regular...)
+	out = append(out, intersect...)
+	return append(out, exclude...)
 }
 
 // termOp splits a leading '!' or '&' operator off a pattern term.
