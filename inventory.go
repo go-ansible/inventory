@@ -124,10 +124,19 @@ func (inv *Inventory) finalize() {
 				break
 			}
 		}
-		if !grouped {
-			ungrouped.Hosts[name] = h
-			all.Hosts[name] = h
+		if grouped {
+			// The INI parser puts a host written before any [group]
+			// header into "ungrouped" as it reads it. If a later
+			// section turns out to claim that host, it is not
+			// ungrouped after all — and nothing used to take it back
+			// out, so it appeared in BOTH, and group_names reported
+			// ['prod', 'ungrouped', 'web'] where real reports
+			// ['prod', 'web'].
+			delete(ungrouped.Hosts, name)
+			continue
 		}
+		ungrouped.Hosts[name] = h
+		all.Hosts[name] = h
 	}
 }
 
