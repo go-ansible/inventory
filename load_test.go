@@ -422,3 +422,25 @@ func TestGroupVarsAllReachesEveryHost(t *testing.T) {
 		}
 	}
 }
+
+// TestSourceDirIsAbsolute: real reports inventory_dir as a full path
+// whatever -i was given, so the inventory records an absolute one.
+func TestSourceDirIsAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "inv.ini"), []byte("h1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := Load(filepath.Join(dir, "inv.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(inv.SourceDir) {
+		t.Errorf("SourceDir = %q, want an absolute path", inv.SourceDir)
+	}
+	// Resolved, so the symlinked temp dirs macOS hands out compare equal.
+	want, _ := filepath.EvalSymlinks(dir)
+	got, _ := filepath.EvalSymlinks(inv.SourceDir)
+	if got != want {
+		t.Errorf("SourceDir = %q, want %q", got, want)
+	}
+}

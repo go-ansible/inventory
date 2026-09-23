@@ -38,6 +38,12 @@ func newGroup(name string) *Group {
 type Inventory struct {
 	Hosts  map[string]*Host
 	Groups map[string]*Group
+
+	// SourceDir is the ABSOLUTE directory the inventory was loaded
+	// from, which real exposes to a playbook as inventory_dir. Empty
+	// for an inventory built in memory, which has no directory to
+	// name.
+	SourceDir string
 }
 
 // New returns an empty inventory pre-seeded with the two groups every

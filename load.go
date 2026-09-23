@@ -90,6 +90,16 @@ func loadWith(path, vaultPassword string) (*Inventory, error) {
 		}
 	}
 
+	// inventory_dir is the directory the inventory came from, absolute
+	// as real reports it: a relative -i path still yields a full one.
+	if len(baseDirs) > 0 {
+		if abs, err := filepath.Abs(baseDirs[0]); err == nil {
+			inv.SourceDir = abs
+		} else {
+			inv.SourceDir = baseDirs[0]
+		}
+	}
+
 	return inv, nil
 }
 
