@@ -106,9 +106,13 @@ func (inv *Inventory) finalize() {
 				break
 			}
 		}
+		// EVERY host belongs to "all" — a grouped one too. Adding
+		// only the ungrouped ones, as this did, left a host in a real
+		// group outside "all" entirely, so group_vars/all.yml — the
+		// most common vars file there is — reached nothing.
+		all.Hosts[name] = h
 		if !grouped {
 			ungrouped.Hosts[name] = h
-			all.Hosts[name] = h
 		}
 	}
 }
