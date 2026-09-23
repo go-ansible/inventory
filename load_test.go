@@ -3,7 +3,9 @@ package inventory
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -442,5 +444,38 @@ func TestSourceDirIsAbsolute(t *testing.T) {
 	got, _ := filepath.EvalSymlinks(inv.SourceDir)
 	if got != want {
 		t.Errorf("SourceDir = %q, want %q", got, want)
+	}
+}
+
+// TestHostWrittenBeforeAGroupHeaderIsNotUngrouped: the INI parser puts
+// a host written before any [group] header into "ungrouped" as it
+// reads it. A later section claiming that host makes it grouped, and
+// nothing used to take it back out — so it appeared in both, and
+// group_names reported ['prod', 'ungrouped', 'web'] where real
+// reports ['prod', 'web'].
+func TestHostWrittenBeforeAGroupHeaderIsNotUngrouped(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "inv.ini"),
+		[]byte("lonely\nweb1\n\n[web]\nweb1\n\n[prod]\nweb1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := Load(filepath.Join(dir, "inv.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := func(host string) []string {
+		var out []string
+		for _, g := range inv.GroupsForHost(host) {
+			out = append(out, g.Name)
+		}
+		sort.Strings(out)
+		return out
+	}
+	if got, want := names("web1"), []string{"all", "prod", "web"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("web1 groups = %v, want %v", got, want)
+	}
+	// And a host that really is in no group keeps ungrouped.
+	if got, want := names("lonely"), []string{"all", "ungrouped"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("lonely groups = %v, want %v", got, want)
 	}
 }
