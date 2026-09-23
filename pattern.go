@@ -53,7 +53,13 @@ func (inv *Inventory) Match(pattern string) ([]*Host, error) {
 	for _, h := range result {
 		out = append(out, h)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	// INVENTORY order, not alphabetical: real lists and runs hosts in
+	// the order the inventory introduced them, which is what
+	// "order: inventory" — the default — means. Sorting by name here
+	// put `lonely` after `h1` where real puts it first.
+	sort.Slice(out, func(i, j int) bool {
+		return inv.HostIndex(out[i].Name) < inv.HostIndex(out[j].Name)
+	})
 	return out, nil
 }
 
