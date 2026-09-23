@@ -95,6 +95,18 @@ func (inv *Inventory) addChild(parentName, childName string) {
 func (inv *Inventory) finalize() {
 	all := inv.group("all")
 	ungrouped := inv.group("ungrouped")
+	// "all" is the PARENT of every other top-level group, not a group
+	// that lists hosts of its own — real's ansible-inventory shows it
+	// with children and no direct hosts. A host reaches it through the
+	// ancestry, which is what makes group_vars/all.yml apply to every
+	// host: without this link a grouped host never saw "all" at all,
+	// and the most common vars file in Ansible reached nothing.
+	for name, g := range inv.Groups {
+		if name == "all" || len(g.Parents) > 0 {
+			continue
+		}
+		inv.addChild("all", name)
+	}
 	for name, h := range inv.Hosts {
 		grouped := false
 		for gname, g := range inv.Groups {

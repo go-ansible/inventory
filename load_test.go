@@ -378,3 +378,47 @@ func TestLoadDynamicInventoryScriptFailureIsAnError(t *testing.T) {
 		t.Fatal("Load on a failing inventory script: got nil error, want one")
 	}
 }
+
+// TestGroupVarsAllReachesEveryHost pins the fix for the most common
+// vars file in Ansible. A host in a real group was never added to the
+// "all" group, so group_vars/all.yml reached nothing — measured
+// against real ansible-core 2.21.4, where every host gets it.
+//
+// Precedence comes with it: "all" is the FLOOR, so a more specific
+// group's file wins, and host_vars wins over any of them.
+func TestGroupVarsAllReachesEveryHost(t *testing.T) {
+	dir := t.TempDir()
+	for _, sub := range []string{"group_vars", "host_vars"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(rel, body string) {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("inv.ini", "lonely\n\n[web]\nh1\nh2\n")
+	write("group_vars/all.yml", "layer: all\nonly_all: from-all\n")
+	write("group_vars/web.yml", "layer: web\n")
+	write("host_vars/h1.yml", "layer: host\n")
+
+	inv, err := Load(filepath.Join(dir, "inv.ini"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ host, layer string }{
+		{"h1", "host"},    // host_vars wins
+		{"h2", "web"},     // then the group's own
+		{"lonely", "all"}, // and "all" is the floor
+	} {
+		vars := inv.HostVars(tc.host)
+		if vars["layer"] != tc.layer {
+			t.Errorf("%s: layer = %v, want %q", tc.host, vars["layer"], tc.layer)
+		}
+		// Every host sees group_vars/all.yml, grouped or not.
+		if vars["only_all"] != "from-all" {
+			t.Errorf("%s: only_all = %v, want it from group_vars/all.yml", tc.host, vars["only_all"])
+		}
+	}
+}
