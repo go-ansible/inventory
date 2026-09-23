@@ -39,6 +39,12 @@ type Inventory struct {
 	Hosts  map[string]*Host
 	Groups map[string]*Group
 
+	// seen records the order hosts were first encountered in, which is
+	// the order real lists and RUNS them in: "order: inventory", the
+	// default, means exactly this. A Go map has none, so it is kept
+	// here.
+	seen map[string]int
+
 	// SourceDir is the ABSOLUTE directory the inventory was loaded
 	// from, which real exposes to a playbook as inventory_dir. Empty
 	// for an inventory built in memory, which has no directory to
@@ -53,6 +59,7 @@ func New() *Inventory {
 	inv := &Inventory{
 		Hosts:  map[string]*Host{},
 		Groups: map[string]*Group{},
+		seen:   map[string]int{},
 	}
 	inv.group("all")
 	inv.group("ungrouped")
@@ -73,6 +80,10 @@ func (inv *Inventory) host(name string) *Host {
 	if !ok {
 		h = &Host{Name: name, Vars: map[string]any{}}
 		inv.Hosts[name] = h
+		if inv.seen == nil {
+			inv.seen = map[string]int{}
+		}
+		inv.seen[name] = len(inv.seen)
 	}
 	return h
 }
@@ -252,9 +263,13 @@ func (inv *Inventory) HostVars(hostName string) map[string]any {
 // scalar var conflicts, group/host membership is unioned) — how Ansible
 // combines multiple inventory sources.
 func (inv *Inventory) Merge(other *Inventory) {
-	for name, h := range other.Hosts {
+	// In the OTHER inventory's own order, so the order hosts were
+	// written in survives the merge. Ranging a Go map here lost it —
+	// which is how `Match("all")` came back alphabetical-ish rather
+	// than as the file reads.
+	for _, name := range other.hostOrder() {
 		dst := inv.host(name)
-		for k, v := range h.Vars {
+		for k, v := range other.Hosts[name].Vars {
 			dst.Vars[k] = v
 		}
 	}
@@ -273,4 +288,26 @@ func (inv *Inventory) Merge(other *Inventory) {
 		}
 	}
 	inv.finalize()
+}
+
+// HostIndex is the position a host was first seen at, which is the
+// order real lists and runs them in. An unknown host sorts last.
+func (inv *Inventory) HostIndex(name string) int {
+	if i, ok := inv.seen[name]; ok {
+		return i
+	}
+	return len(inv.seen)
+}
+
+// hostOrder lists this inventory's hosts in the order they were first
+// seen.
+func (inv *Inventory) hostOrder() []string {
+	out := make([]string, 0, len(inv.Hosts))
+	for name := range inv.Hosts {
+		out = append(out, name)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return inv.HostIndex(out[i]) < inv.HostIndex(out[j])
+	})
+	return out
 }

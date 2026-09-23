@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -75,5 +76,50 @@ func TestParseYAMLHostWithScalarBody(t *testing.T) {
 	}
 	if len(h.Vars) != 0 {
 		t.Fatalf("host1 vars = %v, want empty", h.Vars)
+	}
+}
+
+// TestYAMLInventoryKeepsOrderAndResolvesScalars: the YAML inventory
+// reader decoded into a Go map, which destroyed the order hosts were
+// written in — the order real lists and RUNS them in. It now walks
+// nodes, and applies the same YAML 1.1 scalar resolution the rest of
+// the port does, which a decoded map used to skip entirely.
+func TestYAMLInventoryKeepsOrderAndResolvesScalars(t *testing.T) {
+	inv, err := ParseYAML([]byte(`
+web:
+  hosts:
+    zulu: {}
+    alpha: {}
+    mike: {}
+  vars:
+    flag: yes
+    dur: 1:30
+    word: "yes"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := inv.Match("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, h := range hosts {
+		got = append(got, h.Name)
+	}
+	// Written order, NOT alphabetical.
+	if want := []string{"zulu", "alpha", "mike"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hosts = %v, want %v", got, want)
+	}
+	vars := inv.HostVars("zulu")
+	if vars["flag"] != true {
+		t.Errorf("flag = %#v, want the boolean true", vars["flag"])
+	}
+	if vars["dur"] != 90 {
+		t.Errorf("dur = %#v, want 90", vars["dur"])
+	}
+	// Quoting still asks for the word, here as everywhere.
+	if vars["word"] != "yes" {
+		t.Errorf("word = %#v, want the string \"yes\"", vars["word"])
 	}
 }
