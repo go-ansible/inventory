@@ -14,6 +14,12 @@ import (
 // exclusion and `&` intersection, e.g. "webservers:!web3:&datacenter1")
 // against the inventory, and returns the matching hosts sorted by name.
 func (inv *Inventory) Match(pattern string) ([]*Host, error) {
+	// An IPv6 literal is all colons, and the pattern language uses a
+	// colon as its separator — so "::1" must be recognised BEFORE the
+	// split, or it becomes three empty terms.
+	if h := inv.implicitLocalhost(strings.TrimSpace(pattern)); h != nil {
+		return []*Host{h}, nil
+	}
 	terms, err := splitPattern(pattern)
 	if err != nil {
 		return nil, err
@@ -150,6 +156,14 @@ func splitPattern(pattern string) ([]string, error) {
 }
 
 func (inv *Inventory) matchTerm(term string) ([]*Host, error) {
+	// The IMPLICIT LOCALHOST: real always has one, even with an empty
+	// or unreadable inventory, so `ansible localhost -m ping` and a
+	// play written `hosts: localhost` work with no inventory at all.
+	// It is NOT a member of any group, so "all" does not match it —
+	// real even says so in a warning when that is what you asked for.
+	if h := inv.implicitLocalhost(term); h != nil {
+		return []*Host{h}, nil
+	}
 	if term == "all" || term == "*" {
 		out := make([]*Host, 0, len(inv.Hosts))
 		for _, h := range inv.Hosts {
@@ -301,4 +315,28 @@ func padNumber(n int, width int) string {
 		s = "0" + s
 	}
 	return s
+}
+
+// implicitLocalhostNames are the three spellings real creates an
+// implicit host for — measured, and CASE-SENSITIVE: "LOCALHOST" gets
+// nothing.
+var implicitLocalhostNames = map[string]bool{
+	"localhost": true, "127.0.0.1": true, "::1": true,
+}
+
+// implicitLocalhost returns the host real invents for one of those
+// names when the inventory does not define it, and nil otherwise —
+// including when the inventory DOES define it, where the real entry
+// wins and brings its own variables.
+//
+// It connects locally, which is the point: there is no ssh to
+// localhost to configure.
+func (inv *Inventory) implicitLocalhost(name string) *Host {
+	if !implicitLocalhostNames[name] {
+		return nil
+	}
+	if _, defined := inv.Hosts[name]; defined {
+		return nil
+	}
+	return &Host{Name: name, Vars: map[string]any{"ansible_connection": "local"}}
 }
