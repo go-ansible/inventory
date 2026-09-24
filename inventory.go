@@ -245,6 +245,15 @@ func (inv *Inventory) GroupsForHost(hostName string) []*Group {
 // alphabetically among siblings) followed by the host's own vars, which
 // win on conflict — matching Ansible's group-before-host precedence.
 func (inv *Inventory) HostVars(hostName string) map[string]any {
+	// An implicit localhost has no inventory entry to read from, so
+	// its variables come from the same place its Host does.
+	if h := inv.implicitLocalhost(hostName); h != nil {
+		out := make(map[string]any, len(h.Vars))
+		for k, v := range h.Vars {
+			out[k] = v
+		}
+		return out
+	}
 	merged := map[string]any{}
 	for _, g := range inv.GroupsForHost(hostName) {
 		for k, v := range g.Vars {
