@@ -12,28 +12,51 @@ import (
 // Match resolves an Ansible host pattern ("all", a group name, a glob, a
 // numeric/alpha range, or a colon/comma-separated combination with `!`
 // exclusion and `&` intersection, e.g. "webservers:!web3:&datacenter1")
-// against the inventory, and returns the matching hosts sorted by name.
+// against the inventory, and returns the matching hosts in inventory
+// order.
 func (inv *Inventory) Match(pattern string) ([]*Host, error) {
+	hosts, _, err := inv.MatchReport(pattern)
+	return hosts, err
+}
+
+// MatchReport is Match, and additionally reports each TERM of the
+// pattern that matched neither a host nor a group. Real Ansible warns
+// about exactly those, one line per term — "Could not match supplied
+// host pattern, ignoring: <term>" — so that a mistyped pattern is
+// distinguishable from one that legitimately selects nothing, and a
+// caller that reports to a user wants them.
+//
+// Terms are reported WITHOUT their `!`/`&` operator and in real's own
+// evaluation order (see orderPatterns), because that is the spelling
+// and the order real's own warnings use: `all:!zzz` reports `zzz`, and
+// `aaa,bbb` reports `aaa` then `bbb`. A term naming an EMPTY GROUP is
+// not reported, nor is `all` or `*` — see matchTerm for why those are
+// never mistyped patterns.
+func (inv *Inventory) MatchReport(pattern string) ([]*Host, []string, error) {
 	// An IPv6 literal is all colons, and the pattern language uses a
 	// colon as its separator — so "::1" must be recognised BEFORE the
 	// split, or it becomes three empty terms.
 	if h := inv.implicitLocalhost(strings.TrimSpace(pattern)); h != nil {
-		return []*Host{h}, nil
+		return []*Host{h}, nil, nil
 	}
 	terms, err := splitPattern(pattern)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(terms) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	result := map[string]*Host{}
+	var unmatched []string
 	for _, term := range orderPatterns(terms) {
 		op, expr := termOp(term)
-		matched, err := inv.matchTerm(expr)
+		matched, groupMatched, err := inv.matchTerm(expr)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if len(matched) == 0 && !groupMatched {
+			unmatched = append(unmatched, expr)
 		}
 		switch op {
 		case '!':
@@ -66,7 +89,7 @@ func (inv *Inventory) Match(pattern string) ([]*Host, error) {
 	sort.Slice(out, func(i, j int) bool {
 		return inv.HostIndex(out[i].Name) < inv.HostIndex(out[j].Name)
 	})
-	return out, nil
+	return out, unmatched, nil
 }
 
 // orderPatterns is real Ansible's own order_patterns
@@ -155,21 +178,32 @@ func splitPattern(pattern string) ([]string, error) {
 	return terms, nil
 }
 
-func (inv *Inventory) matchTerm(term string) ([]*Host, error) {
+// matchTerm resolves ONE term of a pattern, and also reports whether
+// that term named a GROUP — which is not the same question as whether
+// it produced hosts, and real Ansible asks both. A term naming an
+// empty group matches nothing yet is not a mistyped pattern, so
+// _enumerate_matches (ansible/inventory/manager.py) warns only when a
+// term matched neither a host NOR a group. Collapsing the two would
+// warn about every empty group in the inventory.
+func (inv *Inventory) matchTerm(term string) ([]*Host, bool, error) {
 	// The IMPLICIT LOCALHOST: real always has one, even with an empty
 	// or unreadable inventory, so `ansible localhost -m ping` and a
 	// play written `hosts: localhost` work with no inventory at all.
 	// It is NOT a member of any group, so "all" does not match it —
 	// real even says so in a warning when that is what you asked for.
 	if h := inv.implicitLocalhost(term); h != nil {
-		return []*Host{h}, nil
+		return []*Host{h}, false, nil
 	}
+	// "all" and "*" always name a group: real exempts "all" from the
+	// warning by name, and "*" escapes it by glob-matching the "all"
+	// group itself, which every inventory has. Neither is ever a
+	// mistyped pattern, however empty the inventory is.
 	if term == "all" || term == "*" {
 		out := make([]*Host, 0, len(inv.Hosts))
 		for _, h := range inv.Hosts {
 			out = append(out, h)
 		}
-		return out, nil
+		return out, true, nil
 	}
 
 	// Exact group name.
@@ -189,26 +223,28 @@ func (inv *Inventory) matchTerm(term string) ([]*Host, error) {
 			}
 		}
 		collect(g)
-		return out, nil
+		return out, true, nil
 	}
 
 	// Exact host name (fast path, before range/glob expansion).
 	if h, ok := inv.Hosts[term]; ok {
-		return []*Host{h}, nil
+		return []*Host{h}, false, nil
 	}
 
 	names, err := expandRanges(term)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	var out []*Host
+	var groupMatched bool
 	for _, name := range names {
 		if h, ok := inv.Hosts[name]; ok {
 			out = append(out, h)
 			continue
 		}
 		if g, ok := inv.Groups[name]; ok {
+			groupMatched = true
 			for _, h := range g.Hosts {
 				out = append(out, h)
 			}
@@ -222,6 +258,7 @@ func (inv *Inventory) matchTerm(term string) ([]*Host, error) {
 			}
 			for groupName, g := range inv.Groups {
 				if ok, _ := path.Match(name, groupName); ok {
+					groupMatched = true
 					for _, h := range g.Hosts {
 						out = append(out, h)
 					}
@@ -229,7 +266,7 @@ func (inv *Inventory) matchTerm(term string) ([]*Host, error) {
 			}
 		}
 	}
-	return out, nil
+	return out, groupMatched, nil
 }
 
 var rangePattern = regexp.MustCompile(`\[([0-9]+|[a-zA-Z]):([0-9]+|[a-zA-Z])(?::([0-9]+))?\]`)
