@@ -21,6 +21,23 @@ type Group struct {
 	Children map[string]*Group
 	Parents  map[string]*Group
 	Vars     map[string]any
+
+	// childOrder is the order children were added in, which is the
+	// order real dumps them: ansible-inventory --list reports
+	// "prod": {"children": ["web", "db"]} for a [prod:children]
+	// section written web-then-db, NOT alphabetically. A Go map has no
+	// order, so it is kept here -- the same reason Inventory.seen
+	// exists for hosts.
+	childOrder []string
+}
+
+// ChildNames returns this group's child groups in the order they were
+// added, which is document order for a parsed inventory. Use it rather
+// than ranging over Children when the order is observable.
+func (g *Group) ChildNames() []string {
+	out := make([]string, len(g.childOrder))
+	copy(out, g.childOrder)
+	return out
 }
 
 func newGroup(name string) *Group {
@@ -44,6 +61,13 @@ type Inventory struct {
 	// default, means exactly this. A Go map has none, so it is kept
 	// here.
 	seen map[string]int
+
+	// groupOrder records the order groups were created in. It decides
+	// the order "all" gains its children in finalize, which is
+	// observable: real reports "all": {"children": ["ungrouped",
+	// "prod"]} -- ungrouped first because it exists from the start.
+	// Ranging over the Groups map there made that order RANDOM.
+	groupOrder []string
 
 	// SourceDir is the ABSOLUTE directory the inventory was loaded
 	// from, which real exposes to a playbook as inventory_dir. Empty
@@ -71,6 +95,7 @@ func (inv *Inventory) group(name string) *Group {
 	if !ok {
 		g = newGroup(name)
 		inv.Groups[name] = g
+		inv.groupOrder = append(inv.groupOrder, name)
 	}
 	return g
 }
@@ -103,6 +128,9 @@ func (inv *Inventory) addHostToGroup(hostName, groupName string) *Host {
 func (inv *Inventory) addChild(parentName, childName string) {
 	parent := inv.group(parentName)
 	child := inv.group(childName)
+	if _, dup := parent.Children[childName]; !dup {
+		parent.childOrder = append(parent.childOrder, childName)
+	}
 	parent.Children[childName] = child
 	child.Parents[parentName] = parent
 }
@@ -118,8 +146,9 @@ func (inv *Inventory) finalize() {
 	// ancestry, which is what makes group_vars/all.yml apply to every
 	// host: without this link a grouped host never saw "all" at all,
 	// and the most common vars file in Ansible reached nothing.
-	for name, g := range inv.Groups {
-		if name == "all" || len(g.Parents) > 0 {
+	for _, name := range inv.groupOrder {
+		g := inv.Groups[name]
+		if g == nil || name == "all" || len(g.Parents) > 0 {
 			continue
 		}
 		inv.addChild("all", name)
