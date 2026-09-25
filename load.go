@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"errors"
 	"fmt"
 	"github.com/go-ansible/vault"
 	"os"
@@ -8,6 +9,14 @@ import (
 	"sort"
 	"strings"
 )
+
+// ErrNoSources reports a path that exists but holds no inventory
+// source at all — a directory whose entries are all subdirectories,
+// group_vars/host_vars, or dotfiles. It is a distinct error because a
+// caller reporting to a user treats it like a missing file rather than
+// like a parse failure: real names the directory but, having never
+// reached a parser, gives no cause for it.
+var ErrNoSources = errors.New("no inventory sources found")
 
 // Load reads an inventory from path, which may be:
 //   - a single YAML file (.yml/.yaml)
@@ -55,6 +64,21 @@ func loadWith(path, vaultPassword string) (*Inventory, error) {
 				continue
 			}
 			names = append(names, e.Name())
+		}
+		// A directory that holds no inventory SOURCE is unusable, not
+		// an empty inventory. Real refuses to parse it and warns
+		// "Unable to parse <dir> as an inventory source" — measured
+		// for three shapes that all reduce to the same thing: an
+		// empty directory, one holding only group_vars/, and one
+		// holding only a dotfile. Those are exactly the entries the
+		// filter above drops, so "nothing survived the filter" is the
+		// condition.
+		//
+		// Returning an empty inventory instead would silently run a
+		// playbook against no hosts, which is what this port used to
+		// do: the user learns nothing about the directory being wrong.
+		if len(names) == 0 {
+			return nil, fmt.Errorf("inventory: %s: %w", path, ErrNoSources)
 		}
 		sort.Strings(names)
 		for _, name := range names {
