@@ -311,17 +311,27 @@ func (inv *Inventory) Merge(other *Inventory) {
 			dst.Vars[k] = v
 		}
 	}
-	for name, g := range other.Groups {
+	// And in the other inventory's own GROUP order, for the same
+	// reason. Only the host loop above had been fixed: these two still
+	// ranged the Groups map, so a merge -- which every Load of a file
+	// does, into the empty inventory it starts from -- shuffled the
+	// group creation order and with it the children of "all".
+	for _, name := range other.groupOrder {
+		g := other.Groups[name]
 		dst := inv.group(name)
 		for k, v := range g.Vars {
 			dst.Vars[k] = v
 		}
-		for hn := range g.Hosts {
-			inv.addHostToGroup(hn, name)
+		// Hosts in the order the other inventory knows them, not the
+		// order its map hands them over in.
+		for _, hn := range other.hostOrder() {
+			if _, ok := g.Hosts[hn]; ok {
+				inv.addHostToGroup(hn, name)
+			}
 		}
 	}
-	for name, g := range other.Groups {
-		for cn := range g.Children {
+	for _, name := range other.groupOrder {
+		for _, cn := range other.Groups[name].ChildNames() {
 			inv.addChild(name, cn)
 		}
 	}
