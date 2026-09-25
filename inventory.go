@@ -87,6 +87,14 @@ func New() *Inventory {
 	}
 	inv.group("all")
 	inv.group("ungrouped")
+	// "ungrouped" is a child of "all" from the start, not only once
+	// finalize has run. An inventory that parsed NOTHING still has the
+	// pair related in real: ansible-inventory --list on an unreadable
+	// source reports "all": {"children": ["ungrouped"]}, and --graph
+	// prints the two lines. Leaving the link to finalize meant an
+	// inventory that never reached it -- the empty one a CLI falls
+	// back to -- described itself as having no groups at all.
+	inv.addChild("all", "ungrouped")
 	return inv
 }
 
