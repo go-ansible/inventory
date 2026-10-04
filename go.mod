@@ -1,6 +1,6 @@
 module github.com/go-ansible/inventory
 
-go 1.26.4
+go 1.27.1
 
 require (
 	github.com/go-ansible/vault v0.7.0
