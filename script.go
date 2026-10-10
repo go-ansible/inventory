@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // IsScript reports whether a file with this mode should be treated as
@@ -48,6 +49,23 @@ func (g *scriptGroup) UnmarshalJSON(data []byte) error {
 // "vars":{...},"children":[...]}` form) plus an optional top-level
 // "_meta" key holding `{"hostvars": {"host1": {...}, ...}}`.
 func ParseScript(path string) (*Inventory, error) {
+	// exec.Command does a $PATH lookup for a name with no separator in
+	// it, so `-i inv.sh` would stat ./inv.sh, decide from THAT file's
+	// mode that it is a script, and then run a different inv.sh found
+	// somewhere on $PATH. Resolving first makes the file we run the
+	// file we examined. Real Ansible runs the file it was pointed at,
+	// and names it absolutely in its own diagnostics -- measured.
+	// exec.Command does a $PATH lookup for a name with no separator in
+	// it, so `-i inv.sh` would stat ./inv.sh, decide from THAT file's
+	// mode that it is a script, and then run a different inv.sh found
+	// somewhere on $PATH. Resolving first makes the file we run the
+	// file we examined. Real Ansible runs the file it was pointed at,
+	// and names it absolutely in its own diagnostics -- measured.
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("inventory: script %s: %w", path, err)
+	}
+
 	listData, err := runScript(path, "--list")
 	if err != nil {
 		return nil, fmt.Errorf("inventory: script %s --list: %w", path, err)
